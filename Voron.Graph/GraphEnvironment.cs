@@ -1,11 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Voron.Graph.Impl;
-using Voron.Impl;
+using System.Threading;
 
 namespace Voron.Graph
 {
@@ -15,7 +9,6 @@ namespace Voron.Graph
         private readonly string _nodeTreeName;
         private readonly string _edgeTreeName;
         private readonly string _disconnectedNodesTreeName;
-        private readonly IHeaderAccessor _headerAccessor;
 
 
         public GraphEnvironment(string graphName, StorageEnvironment storageEnvironment)
@@ -26,23 +19,25 @@ namespace Voron.Graph
             _edgeTreeName = graphName + Constants.EdgeTreeNameSuffix;
             _disconnectedNodesTreeName = graphName + Constants.DisconnectedNodesTreeName;
             _storageEnvironment = storageEnvironment;
-            _headerAccessor = (storageEnvironment.Options is StorageEnvironmentOptions.DirectoryStorageEnvironmentOptions) ?
-                (IHeaderAccessor) new FileHeaderAccessor() : 
-                (IHeaderAccessor) new InMemoryHeaderAccessor(() => new Header
+
+            long next = 0;
+            using (var tx = _storageEnvironment.NewTransaction(TransactionFlags.ReadWrite))
+            {
+                var tree = _storageEnvironment.CreateTree(tx, _nodeTreeName);
+                _storageEnvironment.CreateTree(tx, _edgeTreeName);
+                _storageEnvironment.CreateTree(tx, _disconnectedNodesTreeName);
+                using (var it = tree.Iterate(tx))
                 {
-                    Version = Constants.Version,
-                    NextHi = 0
-                });
+                    if (it.Seek(Slice.AfterAllKeys))
+                    {
+                        next = it.CurrentKey.CreateReader().ReadBigEndianInt64();
+                    }
+                }
+            }
 
-            CreateConventions();
-            CreateSchema();
-        }
-
-        private void CreateConventions()
-        {
             Conventions = new Conventions
             {
-                IdGenerator = new HiLoIdGenerator(_headerAccessor)
+                GenerateNextNodeIdentifier = () => Interlocked.Increment(ref next)
             };
         }
 
@@ -50,23 +45,27 @@ namespace Voron.Graph
 
         public ISession OpenSession()
         {
-            return new Session(_storageEnvironment.CreateSnapshot(),
-                _nodeTreeName,
-                _edgeTreeName,
-                _disconnectedNodesTreeName,
-                wb => _storageEnvironment.Writer.Write(wb),
-                Conventions);
+            return new Session(this);
         }
 
-        private void CreateSchema()
+        public StorageEnvironment StorageEnvironment
         {
-            using (var tx = _storageEnvironment.NewTransaction(TransactionFlags.ReadWrite))
-            {
-                _storageEnvironment.CreateTree(tx, _nodeTreeName);
-                _storageEnvironment.CreateTree(tx, _edgeTreeName);
-                _storageEnvironment.CreateTree(tx, _disconnectedNodesTreeName);
-                tx.Commit();
-            }
+            get { return _storageEnvironment; }
+        }
+
+        public string NodeTreeName
+        {
+            get { return _nodeTreeName; }
+        }
+
+        public string EdgeTreeName
+        {
+            get { return _edgeTreeName; }
+        }
+
+        public string DisconnectedNodesTreeName
+        {
+            get { return _disconnectedNodesTreeName; }
         }
     }
 }

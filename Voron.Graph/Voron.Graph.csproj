@@ -9,8 +9,9 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>Voron.Graph</RootNamespace>
     <AssemblyName>Voron.Graph</AssemblyName>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.5.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
+    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -41,26 +42,17 @@
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.Data" />
     <Reference Include="System.Xml" />
-    <Reference Include="Voron, Version=1.0.0.0, Culture=neutral, PublicKeyToken=37f41c7f99471593, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\Raven.Voron\Voron\bin\Debug\Voron.dll</HintPath>
+    <Reference Include="Voron">
+      <HintPath>..\..\ravendb3\Raven.Voron\Voron\bin\Debug\Voron.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Constants.cs" />
     <Compile Include="Conventions.cs" />
-    <Compile Include="Impl\IHeaderAccessor.cs" />
-    <Compile Include="Impl\InMemoryHeaderAccessor.cs" />
     <Compile Include="Iterator.cs" />
     <Compile Include="Primitives\EdgeTreeKey.cs" />
     <Compile Include="GraphEnvironment.cs" />
-    <Compile Include="Impl\Header.cs" />
-    <Compile Include="Impl\FileHeaderAccessor.cs" />
-    <Compile Include="Misc\HiLoIdGenerator.cs" />
-    <Compile Include="Interfaces\IIdGenerator.cs" />
-    <Compile Include="Interfaces\IUpdateVisitor.cs" />
     <Compile Include="Interfaces\ISession.cs" />
-    <Compile Include="Interfaces\IVisitor.cs" />
     <Compile Include="NativeMethods.cs" />
     <Compile Include="Primitives\Edge.cs" />
     <Compile Include="Primitives\Node.cs" />

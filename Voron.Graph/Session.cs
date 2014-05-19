@@ -14,29 +14,20 @@ namespace Voron.Graph
 {
     public class Session : ISession
     {
+        private readonly GraphEnvironment _graphEnvironment;
         private WriteBatch _writeBatch;
         private SnapshotReader _snapshot;
-        private readonly string _nodeTreeName;
-        private readonly string _edgeTreeName;
-        private readonly Action<WriteBatch> _writerFunc;
-        private readonly string _disconnectedNodesTreeName;
-        private readonly Conventions _conventions;
-        private readonly object _syncObject = new object();
 
-        internal Session(SnapshotReader snapshot, string nodeTreeName, string edgeTreeName, string disconnectedNodesTreeName, Action<WriteBatch> writerFunc,Conventions conventions)
+        internal Session(GraphEnvironment graphEnvironment)
         {
-            _snapshot = snapshot;
-            _conventions = conventions;
-            _nodeTreeName = nodeTreeName;
-            _edgeTreeName = edgeTreeName;
-            _disconnectedNodesTreeName = disconnectedNodesTreeName;
-            _writerFunc = writerFunc;
+            _graphEnvironment = graphEnvironment;
+            _snapshot = _graphEnvironment.StorageEnvironment.CreateSnapshot();
             _writeBatch = new WriteBatch();
-        }              
+        }
 
         public Iterator<Node> IterateNodes()
         {
-            var iterator = _snapshot.Iterate(_nodeTreeName, _writeBatch);
+            var iterator = _snapshot.Iterate(_graphEnvironment.NodeTreeName, _writeBatch);
 
             return new Iterator<Node>(iterator,
                 (key, value) =>
@@ -44,7 +35,7 @@ namespace Voron.Graph
                     using (value)
                     {
                         value.Position = 0;
-                        var node = new Node(key.ToInt64(), value.ToJObject());
+                        var node = new Node(key.CreateReader().ReadBigEndianInt64(), value.ToJObject());
 
                         return node;
                     }
@@ -53,7 +44,7 @@ namespace Voron.Graph
 
         public Iterator<Edge> IterateEdges()
         {
-            var iterator = _snapshot.Iterate(_edgeTreeName, _writeBatch);
+            var iterator = _snapshot.Iterate(_graphEnvironment.EdgeTreeName, _writeBatch);
 
             return new Iterator<Edge>(iterator,
                 (key, value) =>
@@ -64,7 +55,7 @@ namespace Voron.Graph
                         var jsonValue = value.Length > 0 ? value.ToJObject() : new JObject();
 
                         var edge = new Edge(currentKey.NodeKeyFrom, currentKey.NodeKeyTo, jsonValue, currentKey.Type);
-                        
+
                         return edge;
                     }
                 });
@@ -72,33 +63,33 @@ namespace Voron.Graph
 
         public void SaveChanges()
         {
-            _writerFunc(_writeBatch);
+            _graphEnvironment.StorageEnvironment.Writer.Write(_writeBatch);
             _writeBatch.Dispose();
             _writeBatch = new WriteBatch();
         }
 
         public Node CreateNode(dynamic value)
-        {          
+        {
             return CreateNode(Util.ConvertToJObject(value));
         }
-        
+
 
         public Node CreateNode(JObject value)
         {
             if (value == null) throw new ArgumentNullException("value");
 
-            var key = _conventions.IdGenerator.NextId();
+            var key = _graphEnvironment.Conventions.GenerateNextNodeIdentifier();
 
             var nodeKey = key.ToSlice();
 
-            _writeBatch.Add(nodeKey, value.ToStream(), _nodeTreeName);
-            _writeBatch.Add(nodeKey, Stream.Null, _disconnectedNodesTreeName);
+            _writeBatch.Add(nodeKey, value.ToStream(), _graphEnvironment.NodeTreeName);
+            _writeBatch.Add(nodeKey, Stream.Null, _graphEnvironment.DisconnectedNodesTreeName);
 
             return new Node(key, value);
         }
 
         public Edge CreateEdgeBetween(Node nodeFrom, Node nodeTo, dynamic value, ushort type = 0)
-        {          
+        {
             return CreateEdgeBetween(nodeFrom, nodeTo, Util.ConvertToJObject(value), type);
         }
 
@@ -108,44 +99,47 @@ namespace Voron.Graph
             if (nodeTo == null) throw new ArgumentNullException("nodeTo");
 
             var edge = new Edge(nodeFrom.Key, nodeTo.Key, value);
-            _writeBatch.Add(edge.Key.ToSlice(), value.ToStream() ?? Stream.Null, _edgeTreeName);
+            _writeBatch.Add(edge.Key.ToSlice(), value.ToStream() ?? Stream.Null, _graphEnvironment.EdgeTreeName);
 
-            _writeBatch.Delete(nodeFrom.Key.ToSlice(), _disconnectedNodesTreeName);
-            _writeBatch.Delete(nodeTo.Key.ToSlice(), _disconnectedNodesTreeName);
-            
+            _writeBatch.Delete(nodeFrom.Key.ToSlice(), _graphEnvironment.DisconnectedNodesTreeName);
+
             return edge;
         }
 
         public void Delete(Node node)
         {
             var nodeKey = node.Key.ToSlice();
-            _writeBatch.Delete(nodeKey, _nodeTreeName);
-            _writeBatch.Delete(nodeKey, _disconnectedNodesTreeName); //just in case, doesn't have to be here
+            _writeBatch.Delete(nodeKey, _graphEnvironment.NodeTreeName);
+            _writeBatch.Delete(nodeKey, _graphEnvironment.DisconnectedNodesTreeName); //just in case, doesn't have to be here
+
+            //TODO: Where are we deleting the edges?
         }
 
         public void Delete(Edge edge)
         {
             var edgeKey = edge.Key.ToSlice();
-            _writeBatch.Delete(edgeKey, _edgeTreeName);
+            _writeBatch.Delete(edgeKey, _graphEnvironment.EdgeTreeName);
         }
 
-        public IEnumerable<Node> GetAdjacentOf(Node node, Func<ushort,bool> edgeTypePredicate = null)
+        public IEnumerable<Node> GetAdjacentOf(Node node, ushort type)
         {
             var alreadyRetrievedKeys = new HashSet<long>();
-            using (var edgeIterator = _snapshot.Iterate(_edgeTreeName, _writeBatch))
-            {                
-                edgeIterator.RequiredPrefix = node.Key.ToSlice();
+            using (var edgeIterator = _snapshot.Iterate(_graphEnvironment.EdgeTreeName, _writeBatch))
+            {
+                var sliceWriter = new SliceWriter(sizeof(long) + sizeof(ushort));
+                sliceWriter.WriteBigEndian(node.Key);
+                sliceWriter.WriteBigEndian(type);
+                edgeIterator.RequiredPrefix = sliceWriter.CreateSlice();
+                    
                 if (!edgeIterator.Seek(Slice.BeforeAllKeys))
                     yield break;
 
                 do
                 {
                     var edgeKey = edgeIterator.CurrentKey.ToEdgeTreeKey();
-                    if (edgeTypePredicate != null && edgeTypePredicate(edgeKey.Type) == false)
-                        continue;
 
-                    if(!alreadyRetrievedKeys.Contains(edgeKey.NodeKeyTo))
-                    {                        
+                    if (!alreadyRetrievedKeys.Contains(edgeKey.NodeKeyTo))
+                    {
                         alreadyRetrievedKeys.Add(edgeKey.NodeKeyTo);
                         var adjacentNode = LoadNode(edgeKey.NodeKeyTo);
                         yield return adjacentNode;
@@ -157,7 +151,7 @@ namespace Voron.Graph
 
         public bool IsIsolated(Node node)
         {
-            using (var edgeIterator = _snapshot.Iterate(_edgeTreeName, _writeBatch))
+            using (var edgeIterator = _snapshot.Iterate(_graphEnvironment.EdgeTreeName, _writeBatch))
             {
                 edgeIterator.RequiredPrefix = node.Key.ToSlice();
                 return edgeIterator.Seek(Slice.BeforeAllKeys);
@@ -167,7 +161,7 @@ namespace Voron.Graph
 
         public Node LoadNode(long nodeKey)
         {
-            var readResult = _snapshot.Read(_nodeTreeName, nodeKey.ToSlice(),_writeBatch);
+            var readResult = _snapshot.Read(_graphEnvironment.NodeTreeName, nodeKey.ToSlice(), _writeBatch);
             if (readResult == null)
                 return null;
 
@@ -175,18 +169,18 @@ namespace Voron.Graph
                 return new Node(nodeKey, valueStream.ToJObject());
         }
 
-        
-        public IEnumerable<Edge> GetEdgesBetween(Node nodeFrom, Node nodeTo,Func<ushort,bool> typePredicate = null)
+
+        public IEnumerable<Edge> GetEdgesBetween(Node nodeFrom, Node nodeTo, Func<ushort, bool> typePredicate = null)
         {
             if (nodeFrom == null)
                 throw new ArgumentNullException("nodeFrom");
             if (nodeTo == null)
                 throw new ArgumentNullException("nodeTo");
 
-            using (var edgeIterator = _snapshot.Iterate(_edgeTreeName, _writeBatch))
+            using (var edgeIterator = _snapshot.Iterate(_graphEnvironment.EdgeTreeName, _writeBatch))
             {
                 edgeIterator.RequiredPrefix = Util.EdgeKeyPrefix(nodeFrom, nodeTo);
-                if (!edgeIterator.Seek(edgeIterator.RequiredPrefix)) 
+                if (!edgeIterator.Seek(edgeIterator.RequiredPrefix))
                     yield break;
 
                 do
@@ -230,6 +224,6 @@ namespace Voron.Graph
                 Trace.WriteLine("Disposal for Session object was not called, disposing from finalizer. Stack Trace: " + new StackTrace());
 #endif
             Dispose(false);
-        }       
+        }
     }
 }

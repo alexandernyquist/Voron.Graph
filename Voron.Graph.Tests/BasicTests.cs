@@ -185,17 +185,12 @@ namespace Voron.Graph.Tests
         public void Can_Iterate_On_Nearest_Nodes()
         {
             var graph = new GraphEnvironment("TestGraph", Env);
-            long centerNodeKey = 0;
-
-            centerNodeKey = Create2DepthHierarchy(graph);
+            long centerNodeKey = Create2DepthHierarchy(graph);
 
             using (var session = graph.OpenSession())
             {
                 var centerNode = session.LoadNode(centerNodeKey);
-                Dictionary<string, string> nodeValues = new Dictionary<string, string>();
-                var buffer = new byte[100];
-                string curEdgeVal;
-                string curNodeVal;
+                var nodeValues = new Dictionary<string, string>();
 
                 foreach (var curNode in session.GetAdjacentOf(centerNode))
                 {
@@ -207,10 +202,10 @@ namespace Voron.Graph.Tests
                     Assert.IsNotNull(curEdge);
 
                     Assert.AreNotEqual(0, curEdge.Data.Value<int>("Value"));
-                    curEdgeVal = curEdge.Data.Value<string>("Value");
+                    string curEdgeVal = curEdge.Data.Value<string>("Value");
 
                     Assert.AreNotEqual(0, curNode.Data.Value<int>("Value"));
-                    curNodeVal = curNode.Data.Value<string>("Value");
+                    string curNodeVal = curNode.Data.Value<string>("Value");
 
                     nodeValues.Add(curNodeVal, curEdgeVal);
 
